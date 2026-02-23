@@ -10,7 +10,8 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'build')));
 
 // SPA fallback — send index.html for any route React Router handles
-app.get('*', (_req, res) => {
+// Note: Express 5 requires named wildcard params, use a regex route instead
+app.get(/.*/, (_req, res) => {
   res.sendFile(path.join(__dirname, 'build', 'index.html'));
 });
 
