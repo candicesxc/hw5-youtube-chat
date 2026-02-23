@@ -262,38 +262,31 @@ export const chatWithJsonTools = async (history, newMessage, jsonContext, execut
 };
 
 // ── Image generation ──────────────────────────────────────────────────────────
-// Uses Gemini imagen or falls back to gemini-2.0-flash with image generation capability
+// Uses gemini-2.0-flash-exp with responseModalities: ['TEXT','IMAGE']
 
 export const generateImageFromPrompt = async (prompt, anchorImageData = null) => {
   try {
-    // Try imagen-3.0-generate-002 first
-    const imageGenModel = genAI.getGenerativeModel({ model: 'imagen-3.0-generate-002' });
-    const result = await imageGenModel.generateImages({ prompt, numberOfImages: 1 });
-    const img = result.images?.[0];
-    if (img) {
-      return { data: img.imageBytes, mimeType: 'image/png' };
-    }
-  } catch (e1) {
-    console.warn('[Image gen] imagen failed, trying gemini flash exp:', e1.message);
-  }
-
-  try {
-    // Fallback: gemini-2.0-flash-exp with image output
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp-image-generation' });
+    const model = genAI.getGenerativeModel(
+      { model: 'gemini-2.0-flash-exp' },
+      { apiVersion: 'v1beta' }
+    );
     const parts = [{ text: prompt }];
     if (anchorImageData) {
       parts.push({ inlineData: { mimeType: anchorImageData.mimeType || 'image/png', data: anchorImageData.data } });
     }
-    const result = await model.generateContent(parts);
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts }],
+      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+    });
     const candidates = result.response.candidates?.[0]?.content?.parts || [];
     for (const part of candidates) {
       if (part.inlineData?.mimeType?.startsWith('image/')) {
         return { data: part.inlineData.data, mimeType: part.inlineData.mimeType };
       }
     }
-  } catch (e2) {
-    console.warn('[Image gen] gemini exp failed:', e2.message);
+    console.warn('[Image gen] no image part returned by gemini-2.0-flash-exp');
+  } catch (e) {
+    console.warn('[Image gen] gemini-2.0-flash-exp failed:', e.message);
   }
-
   return null;
 };
