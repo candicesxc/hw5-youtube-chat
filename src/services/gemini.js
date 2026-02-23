@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { CSV_TOOL_DECLARATIONS } from './csvTools';
+import { JSON_TOOL_DECLARATIONS } from './jsonTools';
 
 const genAI = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY || '');
 
@@ -191,4 +192,108 @@ export const chatWithCsvTools = async (history, newMessage, csvHeaders, executeF
   }
 
   return { text: response.text(), charts, toolCalls };
+};
+
+// ── Function-calling chat for JSON (YouTube) tools ────────────────────────────
+// Same pattern as CSV tools but uses JSON_TOOL_DECLARATIONS.
+
+export const chatWithJsonTools = async (history, newMessage, jsonContext, executeFn) => {
+  const systemInstruction = await loadSystemPrompt();
+  const allDeclarations = [...JSON_TOOL_DECLARATIONS];
+
+  const model = genAI.getGenerativeModel({
+    model: MODEL,
+    tools: [{ functionDeclarations: allDeclarations }],
+  });
+
+  const baseHistory = history.map((m) => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.content || '' }],
+  }));
+
+  const chatHistory = systemInstruction
+    ? [
+        {
+          role: 'user',
+          parts: [{ text: `Follow these instructions in every response:\n\n${systemInstruction}` }],
+        },
+        { role: 'model', parts: [{ text: "Got it! I'll follow those instructions." }] },
+        ...baseHistory,
+      ]
+    : baseHistory;
+
+  const chat = model.startChat({ history: chatHistory });
+
+  const msgWithContext = jsonContext
+    ? `[JSON Data loaded: ${jsonContext.summary}]\n\n${newMessage}`
+    : newMessage;
+
+  let response = (await chat.sendMessage(msgWithContext)).response;
+
+  const charts = [];
+  const toolCalls = [];
+  const videoCards = [];
+  const generatedImages = [];
+
+  for (let round = 0; round < 5; round++) {
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    const funcCall = parts.find((p) => p.functionCall);
+    if (!funcCall) break;
+
+    const { name, args } = funcCall.functionCall;
+    console.log('[JSON Tool]', name, args);
+    const toolResult = await executeFn(name, args);
+    console.log('[JSON Tool result]', toolResult);
+
+    toolCalls.push({ name, args, result: toolResult });
+
+    if (toolResult?._chartType) charts.push(toolResult);
+    if (toolResult?._videoCard) videoCards.push(toolResult);
+    if (toolResult?._generatedImage) generatedImages.push(toolResult);
+
+    response = (
+      await chat.sendMessage([
+        { functionResponse: { name, response: { result: toolResult } } },
+      ])
+    ).response;
+  }
+
+  return { text: response.text(), charts, toolCalls, videoCards, generatedImages };
+};
+
+// ── Image generation ──────────────────────────────────────────────────────────
+// Uses Gemini imagen or falls back to gemini-2.0-flash with image generation capability
+
+export const generateImageFromPrompt = async (prompt, anchorImageData = null) => {
+  try {
+    // Try imagen-3.0-generate-002 first
+    const imageGenModel = genAI.getGenerativeModel({ model: 'imagen-3.0-generate-002' });
+    const result = await imageGenModel.generateImages({ prompt, numberOfImages: 1 });
+    const img = result.images?.[0];
+    if (img) {
+      return { data: img.imageBytes, mimeType: 'image/png' };
+    }
+  } catch (e1) {
+    console.warn('[Image gen] imagen failed, trying gemini flash exp:', e1.message);
+  }
+
+  try {
+    // Fallback: gemini-2.0-flash-exp with image output
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp-image-generation' });
+    const parts = [{ text: prompt }];
+    if (anchorImageData) {
+      parts.push({ inlineData: { mimeType: anchorImageData.mimeType || 'image/png', data: anchorImageData.data } });
+    }
+    const result = await model.generateContent(parts);
+    const candidates = result.response.candidates?.[0]?.content?.parts || [];
+    for (const part of candidates) {
+      if (part.inlineData?.mimeType?.startsWith('image/')) {
+        return { data: part.inlineData.data, mimeType: part.inlineData.mimeType };
+      }
+    }
+  } catch (e2) {
+    console.warn('[Image gen] gemini exp failed:', e2.message);
+  }
+
+  return null;
 };

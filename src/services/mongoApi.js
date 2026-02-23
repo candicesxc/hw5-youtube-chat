@@ -12,10 +12,10 @@ const api = async (path, options = {}) => {
 
 // ── Users ────────────────────────────────────────────────────────────────────
 
-export const createUser = async (username, password, email = '') => {
+export const createUser = async (username, password, email = '', firstName = '', lastName = '') => {
   await api('/api/users', {
     method: 'POST',
-    body: JSON.stringify({ username, password, email }),
+    body: JSON.stringify({ username, password, email, firstName, lastName }),
   });
 };
 
@@ -24,7 +24,7 @@ export const findUser = async (username, password) => {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   });
-  return data.ok ? { username: data.username } : null;
+  return data.ok ? { username: data.username, firstName: data.firstName, lastName: data.lastName } : null;
 };
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
@@ -62,4 +62,13 @@ export const saveMessage = async (sessionId, role, content, imageData = null, ch
 
 export const loadMessages = async (sessionId) => {
   return api(`/api/messages?session_id=${encodeURIComponent(sessionId)}`);
+};
+
+// ── YouTube Channel ───────────────────────────────────────────────────────────
+
+export const downloadYouTubeChannel = async (channelUrl, maxVideos = 10) => {
+  return api('/api/youtube/channel', {
+    method: 'POST',
+    body: JSON.stringify({ channelUrl, maxVideos }),
+  });
 };

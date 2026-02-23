@@ -3,6 +3,7 @@ const express = require('express');
 const { MongoClient, ObjectId } = require('mongodb');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
+const axios = require('axios');
 
 const app = express();
 app.use(cors());
@@ -47,7 +48,7 @@ app.get('/api/status', async (req, res) => {
 
 app.post('/api/users', async (req, res) => {
   try {
-    const { username, password, email } = req.body;
+    const { username, password, email, firstName, lastName } = req.body;
     if (!username || !password)
       return res.status(400).json({ error: 'Username and password required' });
     const name = String(username).trim().toLowerCase();
@@ -58,6 +59,8 @@ app.post('/api/users', async (req, res) => {
       username: name,
       password: hashed,
       email: email ? String(email).trim().toLowerCase() : null,
+      firstName: firstName ? String(firstName).trim() : null,
+      lastName: lastName ? String(lastName).trim() : null,
       createdAt: new Date().toISOString(),
     });
     res.json({ ok: true });
@@ -76,7 +79,7 @@ app.post('/api/users/login', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'User not found' });
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(401).json({ error: 'Invalid password' });
-    res.json({ ok: true, username: name });
+    res.json({ ok: true, username: name, firstName: user.firstName || null, lastName: user.lastName || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -203,6 +206,148 @@ app.get('/api/messages', async (req, res) => {
     res.json(msgs);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── YouTube Channel Download ──────────────────────────────────────────────────
+
+app.post('/api/youtube/channel', async (req, res) => {
+  try {
+    const { channelUrl, maxVideos = 10 } = req.body;
+    const apiKey = process.env.REACT_APP_YOUTUBE_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'YouTube API key not configured' });
+    if (!channelUrl) return res.status(400).json({ error: 'channelUrl required' });
+
+    // Resolve channel ID from URL
+    let channelId = null;
+    let channelHandle = null;
+
+    // Extract handle or channel ID from URL
+    const handleMatch = channelUrl.match(/@([\w.-]+)/);
+    const channelIdMatch = channelUrl.match(/channel\/(UC[\w-]+)/);
+    const userMatch = channelUrl.match(/\/user\/([\w.-]+)/);
+
+    if (handleMatch) {
+      channelHandle = handleMatch[1];
+    } else if (channelIdMatch) {
+      channelId = channelIdMatch[1];
+    }
+
+    // Search for channel by handle or username
+    if (!channelId) {
+      const searchQuery = channelHandle || (userMatch ? userMatch[1] : channelUrl);
+      const searchResp = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+        params: {
+          part: 'snippet',
+          q: searchQuery,
+          type: 'channel',
+          maxResults: 1,
+          key: apiKey,
+        },
+      });
+      channelId = searchResp.data.items?.[0]?.id?.channelId;
+      if (!channelId) return res.status(404).json({ error: 'Channel not found' });
+    }
+
+    // Get channel uploads playlist
+    const channelResp = await axios.get('https://www.googleapis.com/youtube/v3/channels', {
+      params: {
+        part: 'contentDetails,snippet',
+        id: channelId,
+        key: apiKey,
+      },
+    });
+    const channel = channelResp.data.items?.[0];
+    if (!channel) return res.status(404).json({ error: 'Channel not found' });
+    const uploadsPlaylistId = channel.contentDetails.relatedPlaylists.uploads;
+
+    // Get videos from uploads playlist
+    const limit = Math.min(parseInt(maxVideos) || 10, 100);
+    let videoIds = [];
+    let pageToken = null;
+
+    while (videoIds.length < limit) {
+      const params = {
+        part: 'snippet',
+        playlistId: uploadsPlaylistId,
+        maxResults: Math.min(50, limit - videoIds.length),
+        key: apiKey,
+      };
+      if (pageToken) params.pageToken = pageToken;
+
+      const playlistResp = await axios.get('https://www.googleapis.com/youtube/v3/playlistItems', { params });
+      const items = playlistResp.data.items || [];
+      videoIds.push(...items.map((item) => item.snippet.resourceId.videoId));
+      pageToken = playlistResp.data.nextPageToken;
+      if (!pageToken) break;
+    }
+    videoIds = videoIds.slice(0, limit);
+
+    // Get detailed video stats in batches of 50
+    const videos = [];
+    for (let i = 0; i < videoIds.length; i += 50) {
+      const batch = videoIds.slice(i, i + 50);
+      const videoResp = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+        params: {
+          part: 'snippet,statistics,contentDetails',
+          id: batch.join(','),
+          key: apiKey,
+        },
+      });
+      for (const v of videoResp.data.items || []) {
+        // Parse duration (ISO 8601 PT#M#S)
+        const dur = v.contentDetails.duration || '';
+        const durMatch = dur.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+        const hours = parseInt(durMatch?.[1] || 0);
+        const minutes = parseInt(durMatch?.[2] || 0);
+        const seconds = parseInt(durMatch?.[3] || 0);
+        const durationSecs = hours * 3600 + minutes * 60 + seconds;
+
+        // Try to get transcript (not blocking — skip if unavailable)
+        let transcript = null;
+        try {
+          const transcriptResp = await axios.get(
+            `https://www.youtube.com/watch?v=${v.id}`,
+            { timeout: 5000, headers: { 'Accept-Language': 'en-US' } }
+          );
+          // Extract timedtext URL from page source
+          const timedtextMatch = transcriptResp.data.match(/"captionTracks":\[.*?"baseUrl":"([^"]+)"/);
+          if (timedtextMatch) {
+            const captionUrl = timedtextMatch[1].replace(/\\u0026/g, '&');
+            const captionResp = await axios.get(captionUrl, { timeout: 5000 });
+            // Parse XML transcript
+            const textMatches = captionResp.data.match(/<text[^>]*>([^<]*)<\/text>/g);
+            if (textMatches) {
+              transcript = textMatches
+                .map((t) => t.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").trim())
+                .filter(Boolean)
+                .join(' ')
+                .slice(0, 2000);
+            }
+          }
+        } catch {
+          // Transcript unavailable, continue without it
+        }
+
+        videos.push({
+          title: v.snippet.title,
+          description: (v.snippet.description || '').slice(0, 500),
+          duration: durationSecs,
+          release_date: v.snippet.publishedAt,
+          view_count: parseInt(v.statistics.viewCount || 0),
+          like_count: parseInt(v.statistics.likeCount || 0),
+          comment_count: parseInt(v.statistics.commentCount || 0),
+          video_url: `https://www.youtube.com/watch?v=${v.id}`,
+          thumbnail_url: v.snippet.thumbnails?.medium?.url || v.snippet.thumbnails?.default?.url || '',
+          transcript,
+        });
+      }
+    }
+
+    res.json({ channelName: channel.snippet.title, videos });
+  } catch (err) {
+    console.error('[YouTube API error]', err.response?.data || err.message);
+    res.status(500).json({ error: err.response?.data?.error?.message || err.message });
   }
 });
 
