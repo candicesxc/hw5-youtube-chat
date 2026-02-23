@@ -12,26 +12,25 @@ services:
     startCommand: node server/index.js
     envVars:
       - key: MONGODB_URI
-        sync: false   # set manually in the Render dashboard
+        sync: false
       - key: REACT_APP_MONGODB_URI
-        sync: false   # alternative key name used in code
+        sync: false
       - key: REACT_APP_YOUTUBE_API_KEY
-        sync: false   # YouTube Data API v3 key
+        sync: false
 
-  # ── Frontend: React static site ────────────────────────────────────────────
-  - type: static
+  # ── Frontend: React app served by Express ──────────────────────────────────
+  - type: web
     name: hw5-youtube-chat-frontend
+    env: node
     plan: free
-    buildCommand: npm install && ./node_modules/.bin/react-scripts build
-    staticPublishPath: ./build
+    buildCommand: npm install && npm run build
+    startCommand: node serve.js
     envVars:
       - key: REACT_APP_GEMINI_API_KEY
-        sync: false   # baked into JS bundle at build time
+        sync: false
       - key: REACT_APP_YOUTUBE_API_KEY
-        sync: false   # baked into JS bundle at build time (used for frontend if needed)
+        sync: false
       - key: REACT_APP_API_URL
-        sync: false   # set to the backend URL, e.g. https://hw5-youtube-chat-backend.onrender.com
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+        sync: false
+      - key: PORT
+        value: "3000"
