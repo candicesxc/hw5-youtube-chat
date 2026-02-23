@@ -429,16 +429,18 @@ export default function Chat({ username, firstName, lastName, onLogout }) {
 
     // ── Routing intent ─────────────────────────────────────────────────────────
     const PYTHON_ONLY_KEYWORDS = /\b(regression|scatter|histogram|seaborn|matplotlib|numpy|time.?series|heatmap|box.?plot|violin|distribut|linear.?model|logistic|forecast|trend.?line)\b/i;
+    const IMAGE_KEYWORDS = /\b(generate|create|draw|make|design|produce|render|paint|illustrat|sketch)\b.{0,40}\b(image|picture|photo|illustration|artwork|drawing|painting|graphic|visual|thumbnail|poster)\b|\b(image|picture|photo|illustration|artwork|drawing|painting|graphic|visual|thumbnail|poster)\b.{0,40}\b(of|showing|with|about|depicting|scene)\b/i;
+    const wantImage = IMAGE_KEYWORDS.test(text);
     const wantPythonOnly = PYTHON_ONLY_KEYWORDS.test(text);
     const wantCode = CODE_KEYWORDS.test(text) && !sessionCsvRows && !sessionJsonRows;
     const capturedCsv = csvContext;
 
     const needsBase64 = !!capturedCsv && wantPythonOnly;
 
-    // useJsonTools: when JSON is loaded and no Python keywords
-    const useJsonTools = !!sessionJsonRows && !wantPythonOnly && !wantCode;
+    // useJsonTools: when JSON is loaded and no Python keywords and not an image request
+    const useJsonTools = !!sessionJsonRows && !wantPythonOnly && !wantCode && !wantImage;
     // useTools: CSV loaded and no Python needed
-    const useTools = !!sessionCsvRows && !wantPythonOnly && !wantCode && !capturedCsv && !useJsonTools;
+    const useTools = !!sessionCsvRows && !wantPythonOnly && !wantCode && !capturedCsv && !useJsonTools && !wantImage;
     const useCodeExecution = wantPythonOnly || wantCode;
 
     // ── Build prompt ─────────────────────────────────────────────────────────
@@ -528,7 +530,29 @@ ${sessionSummary}${slimCsvBlock}
     let generatedImages = [];
 
     try {
-      if (useJsonTools) {
+      if (wantImage) {
+        // ── Direct image generation path (works with or without JSON/CSV) ───────
+        console.log('[Chat] wantImage=true, calling generateImageFromPrompt');
+        const anchorImage = capturedImages.length > 0 ? capturedImages[0] : null;
+        const imgResult = await generateImageFromPrompt(text, anchorImage);
+        if (imgResult) {
+          generatedImages = [{ _generatedImage: true, prompt: text, data: imgResult.data, mimeType: imgResult.mimeType }];
+          fullContent = `Here's the image I generated for: *${text}*`;
+        } else {
+          fullContent = "I'm sorry, image generation isn't available right now. The image models may be temporarily unavailable — please try again in a moment.";
+        }
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === assistantId
+              ? {
+                  ...msg,
+                  content: fullContent,
+                  generatedImages: generatedImages.length ? generatedImages : undefined,
+                }
+              : msg
+          )
+        );
+      } else if (useJsonTools) {
         // ── JSON function-calling path ─────────────────────────────────────────
         console.log('[Chat] useJsonTools=true | rows:', sessionJsonRows.length);
         const anchorImage = capturedImages.length > 0 ? capturedImages[0] : null;
