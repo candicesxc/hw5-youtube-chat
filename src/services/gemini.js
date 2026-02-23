@@ -262,31 +262,37 @@ export const chatWithJsonTools = async (history, newMessage, jsonContext, execut
 };
 
 // ── Image generation ──────────────────────────────────────────────────────────
-// Uses gemini-2.0-flash-exp with responseModalities: ['TEXT','IMAGE']
+// Uses gemini-2.5-flash-image with responseModalities: ['TEXT','IMAGE']
 
 export const generateImageFromPrompt = async (prompt, anchorImageData = null) => {
-  try {
-    const model = genAI.getGenerativeModel(
-      { model: 'gemini-2.0-flash-exp' },
-      { apiVersion: 'v1beta' }
-    );
-    const parts = [{ text: prompt }];
-    if (anchorImageData) {
-      parts.push({ inlineData: { mimeType: anchorImageData.mimeType || 'image/png', data: anchorImageData.data } });
-    }
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-    });
-    const candidates = result.response.candidates?.[0]?.content?.parts || [];
-    for (const part of candidates) {
-      if (part.inlineData?.mimeType?.startsWith('image/')) {
-        return { data: part.inlineData.data, mimeType: part.inlineData.mimeType };
+  // Try models in order until one works
+  const IMAGE_MODELS = [
+    'gemini-2.5-flash-image',
+    'gemini-2.0-flash-preview-image-generation',
+  ];
+
+  for (const modelName of IMAGE_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const parts = [{ text: prompt }];
+      if (anchorImageData) {
+        parts.push({ inlineData: { mimeType: anchorImageData.mimeType || 'image/png', data: anchorImageData.data } });
       }
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+      });
+      const candidates = result.response.candidates?.[0]?.content?.parts || [];
+      for (const part of candidates) {
+        if (part.inlineData?.mimeType?.startsWith('image/')) {
+          console.log(`[Image gen] success with ${modelName}`);
+          return { data: part.inlineData.data, mimeType: part.inlineData.mimeType };
+        }
+      }
+      console.warn(`[Image gen] no image part returned by ${modelName}`);
+    } catch (e) {
+      console.warn(`[Image gen] ${modelName} failed:`, e.message);
     }
-    console.warn('[Image gen] no image part returned by gemini-2.0-flash-exp');
-  } catch (e) {
-    console.warn('[Image gen] gemini-2.0-flash-exp failed:', e.message);
   }
   return null;
 };
