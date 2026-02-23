@@ -4,7 +4,7 @@ import { JSON_TOOL_DECLARATIONS } from './jsonTools';
 
 const genAI = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY || '');
 
-const MODEL = 'gemini-2.0-flash';
+const MODEL = 'gemini-2.0-flash-lite';
 
 const SEARCH_TOOL = { googleSearch: {} };
 const CODE_EXEC_TOOL = { codeExecution: {} };
