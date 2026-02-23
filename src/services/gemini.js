@@ -251,9 +251,16 @@ export const chatWithJsonTools = async (history, newMessage, jsonContext, execut
     if (toolResult?._videoCard) videoCards.push(toolResult);
     if (toolResult?._generatedImage) generatedImages.push(toolResult);
 
+    // Strip base64 image data before sending back to Gemini — the model only
+    // needs to know the image was generated, not the raw bytes (which would
+    // blow past the token limit).
+    const safeResult = toolResult?._generatedImage
+      ? { _generatedImage: true, prompt: toolResult.prompt, status: 'success', mimeType: toolResult.mimeType }
+      : toolResult;
+
     response = (
       await chat.sendMessage([
-        { functionResponse: { name, response: { result: toolResult } } },
+        { functionResponse: { name, response: { result: safeResult } } },
       ])
     ).response;
   }
