@@ -508,10 +508,21 @@ ${sessionSummary}${slimCsvBlock}
 
     const imageParts = capturedImages.map((img) => ({ mimeType: img.mimeType, data: img.data }));
 
-    // History: plain display text only — session summary handles CSV context on every message
+    // History: plain display text only, capped at last 20 messages to avoid token overflow.
+    // Strip any base64 image data that may have been stored in content strings.
+    const MAX_HISTORY = 20;
     const history = messages
       .filter((m) => m.role === 'user' || m.role === 'model')
-      .map((m) => ({ role: m.role, content: m.content || messageText(m) }));
+      .slice(-MAX_HISTORY)
+      .map((m) => {
+        let content = m.content || messageText(m) || '';
+        // Remove any accidental base64 blobs (data:image/... or raw base64 > 500 chars)
+        content = content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]{100,}/g, '[image]');
+        content = content.replace(/[A-Za-z0-9+/]{500,}={0,2}/g, '[image data]');
+        // Truncate individual messages to 2000 chars to stay within limits
+        if (content.length > 2000) content = content.slice(0, 2000) + '…';
+        return { role: m.role, content };
+      });
 
     const assistantId = `a-${Date.now()}`;
     setMessages((m) => [
