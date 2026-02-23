@@ -357,7 +357,7 @@ const PORT = process.env.PORT || 3001;
 
 connect()
   .then(() => {
-    app.listen(PORT, () => console.log(`Server on http://localhost:${PORT}`));
+    app.listen(PORT, '0.0.0.0', () => console.log(`Server on http://0.0.0.0:${PORT}`));
   })
   .catch((err) => {
     console.error('MongoDB connection failed:', err.message);
